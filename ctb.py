@@ -40,7 +40,7 @@ import yfinance as yf
 #from IPython.display import display
 import streamlit as st
 st.set_option('deprecation.showPyplotGlobalUse', False)
-st.title('Crypto Trading Bot Dashboard')
+st.title('Crypto Trading Bot xxx')
 
 
 st.subheader('Select your crypto-currency:')
