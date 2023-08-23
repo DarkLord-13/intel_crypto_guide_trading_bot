@@ -1,0 +1,7 @@
+tensorflow_io
+matplotlib
+scikit-learn
+tensorflow
+yfinance
+plotly
+streamlit
