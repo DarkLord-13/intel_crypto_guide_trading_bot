@@ -5,3 +5,4 @@ tensorflow
 yfinance
 plotly
 streamlit
+IPython
