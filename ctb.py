@@ -49,7 +49,13 @@ symbol = st.selectbox('',['BTC', 'ETH', 'LTC'])
 
 symbol+='-USD'
 st.subheader(symbol)
-df = pd.read_csv('%s.csv' % symbol)
+
+start_date = "2018-01-01"
+end_date = dt.datetime.now()
+
+df = yf.download(symbol, start=start_date, end=end_date)
+df.to_csv(symbol)
+df = pd.read_csv(symbol)
 
 
 df = df.dropna(how='any')
