@@ -57,6 +57,7 @@ df = yf.download(symbol, start=start_date, end=end_date)
 df.to_csv(symbol)
 df = pd.read_csv(symbol)
 
+st.table(df)
 
 df = df.dropna(how='any')
 
