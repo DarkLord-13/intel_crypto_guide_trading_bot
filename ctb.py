@@ -37,7 +37,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 
 import yfinance as yf
-from IPython.display import display
+#from IPython.display import display
 import streamlit as st
 st.set_option('deprecation.showPyplotGlobalUse', False)
 st.title('Crypto Trading Bot Dashboard')
