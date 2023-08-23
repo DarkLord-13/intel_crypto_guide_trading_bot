@@ -1,4 +1,0 @@
-1. ensure that you download latest data from yahoo finance and upload it in the same folder as the ctb.py
-2. ensure that the downloaded data is from 2018 to current date
-
-3. run the ctb.py file in your terminal with command: streamlit run ctb.py
