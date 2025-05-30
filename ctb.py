@@ -1,357 +1,438 @@
-# First we will import the necessary Library
-
+# Import necessary libraries
 import os
 import pandas as pd
 import numpy as np
 import math
 import datetime as dt
 import matplotlib.pyplot as plt
+import warnings
 
-# For Evalution we will use these library
+warnings.filterwarnings('ignore')
 
+# For Evaluation
 from sklearn.metrics import mean_squared_error, mean_absolute_error, explained_variance_score, r2_score
-from sklearn.metrics import mean_poisson_deviance, mean_gamma_deviance, accuracy_score
 from sklearn.preprocessing import MinMaxScaler
 
-# For model building we will use these library
-
+# For model building
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.layers import LSTM
+from tensorflow.keras.layers import Dense, Dropout, LSTM
+from tensorflow.keras.optimizers import Adam
 
-# For PLotting we will use these library
-
-import matplotlib.pyplot as plt
-from itertools import cycle
+# For Plotting
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 
 import yfinance as yf
-#from IPython.display import display
 import streamlit as st
 
+# Configure Streamlit
+st.set_page_config(page_title="Crypto Trading Bot", layout="wide")
+st.title('🚀 Advanced Crypto Trading Bot Dashboard')
 
-# st.set_option('deprecation.showPyplotGlobalUse', False)
-st.title('Crypto Trading Bot Dashboard')
+# Sidebar for user inputs
+st.sidebar.header("Configuration")
 
+# Crypto selection
+st.sidebar.subheader('Select Cryptocurrency:')
+crypto_options = {
+    'Bitcoin': 'BTC-USD',
+    'Ethereum': 'ETH-USD',
+    'Litecoin': 'LTC-USD',
+    'Cardano': 'ADA-USD',
+    'Solana': 'SOL-USD',
+    'Dogecoin': 'DOGE-USD'
+}
+selected_crypto = st.sidebar.selectbox('Choose cryptocurrency:', list(crypto_options.keys()))
+symbol = crypto_options[selected_crypto]
 
-st.subheader('Select your crypto-currency:')
-symbol = st.selectbox('',['BTC', 'ETH', 'LTC'])
+# Portfolio inputs
+st.sidebar.subheader('Portfolio Information')
+holding_value = st.sidebar.number_input('Total Holdings Value (USD):', min_value=0.0, value=0.0, step=100.0)
+crypto_name = selected_crypto.split('-')[0] if '-' in selected_crypto else selected_crypto
+num_coins = st.sidebar.number_input(f'Number of {crypto_name} coins:', min_value=0.0, value=0.0, step=0.1)
 
+# Date range selection
+st.sidebar.subheader('Date Range')
+start_date = st.sidebar.date_input('Start Date', dt.date(2020, 1, 1))
+end_date = st.sidebar.date_input('End Date', dt.date.today())
 
-symbol+='-USD'
-st.subheader(symbol)
-
-start_date = "2018-01-01"
-end_date = dt.datetime.now()
-
-df = yf.download(symbol, start=start_date, end=end_date)
-df.to_csv(symbol)
-df = pd.read_csv(symbol)
-
-st.dataframe(df)
-
-df = df.dropna(how='any')
-
-
-cols_to_drop = [col for col in ['Volume', 'Adj Close'] if col in df.columns]
-df = df.drop(columns=cols_to_drop, axis=1)
-
-st.write('Monthvise average crypto price from 2018')
-
-df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
-monthvise= df.groupby(df['Date'].dt.strftime('%B'))[['Open','Close']].mean()
-new_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
-             'September', 'October', 'November', 'December']
-monthvise = monthvise.reindex(new_order, axis=0)
-st.table(monthvise) 
-
-fig = go.Figure()
-
-fig.add_trace(go.Bar(
-    x=monthvise.index,
-    y=monthvise['Open'],
-    name='Stock Open Price',
-    marker_color='crimson'
-))
-fig.add_trace(go.Bar(
-    x=monthvise.index,
-    y=monthvise['Close'],
-    name='Stock Close Price',
-    marker_color='lightsalmon'
-))
-
-fig.update_layout(barmode='group', xaxis_tickangle=-45,
-                  title='Monthwise comparision between Stock open and close price')
-st.plotly_chart(fig) # display
-
-names = cycle(['Stock Open Price','Stock Close Price','Stock High Price','Stock Low Price'])
-
-fig = px.line(df, x=df.Date, y=[df['Open'], df['Close'],
-                                          df['High'], df['Low']],
-             labels={'Date': 'Date','value':'Stock value'})
-fig.update_layout(title_text='Stock analysis chart', font_size=15, font_color='black',legend_title_text='Stock Parameters')
-fig.for_each_trace(lambda t:  t.update(name = next(names)))
-fig.update_xaxes(showgrid=False)
-fig.update_yaxes(showgrid=False)
-
-st.plotly_chart(fig)
+# Model parameters
+st.sidebar.subheader('Model Parameters')
+lstm_units_1 = st.sidebar.slider('First LSTM Units', 32, 256, 128)
+lstm_units_2 = st.sidebar.slider('Second LSTM Units', 16, 128, 64)
+epochs = st.sidebar.slider('Training Epochs', 10, 100, 50)
+batch_size = st.sidebar.slider('Batch Size', 16, 64, 32)
+prediction_days = st.sidebar.slider('Prediction Days', 7, 60, 30)
 
 
-df = df[['Date', 'Close']]
+# Data loading and preprocessing
+@st.cache_data
+def load_data(symbol, start_date, end_date):
+    """Load cryptocurrency data from Yahoo Finance"""
+    try:
+        df = yf.download(symbol, start=start_date, end=end_date)
+        if df.empty:
+            st.error(f"No data found for {symbol}")
+            return None
 
-fig = px.line(df, x=df.Date, y=df.Close,labels={'date':'Date','close':'Close Stock'})
-fig.update_traces(marker_line_width=2, opacity=1, marker_line_color='red')
-fig.update_layout(title_text=f'Whole period of timeframe of {symbol} close price 2018-2023', plot_bgcolor='white',
-                  font_size=15, font_color='black')
-fig.update_xaxes(showgrid=False)
-fig.update_yaxes(showgrid=False)
-st.plotly_chart(fig)
+        # Reset index to make Date a column
+        df.reset_index(inplace=True)
 
+        # Ensure we have the expected columns
+        expected_cols = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
+        if 'Adj Close' in df.columns:
+            df = df.drop('Adj Close', axis=1)
 
-df1 = pd.Series(df['Close'])
+        # Rename columns if they have different names (MultiIndex issue)
+        if hasattr(df.columns, 'levels'):  # MultiIndex columns
+            df.columns = df.columns.droplevel(1)  # Remove second level
 
-# Calculate Simple Moving Average (SMA)
-sma_window = 100  # Number of data points to use for the SMA window
-sma = df1.rolling(window=sma_window).mean()
-
-# Calculate Exponential Moving Average (EMA)
-ema_span = 100  # Span for EMA calculation (similar to window for SMA)
-ema = df1.ewm(span=ema_span, adjust=False).mean()
-
-#super trend,vwap, rsi, 4 parameters, ema(9days ma, 20, 50, 200)
-
-
-
-
-fig = px.line(y=sma, x=df.Date, title='Simple Moving Average', labels={'x': 'Date', 'y': 'Closing Price'})
-st.plotly_chart(fig)
-
-fig = px.line(y=ema, x=df.Date, title='Exponential Moving Average', labels={'x': 'Date', 'y': 'Closing Price'})
-st.plotly_chart(fig)
+        df = df.dropna()
+        return df
+    except Exception as e:
+        st.error(f"Error loading data: {str(e)}")
+        return None
 
 
-def calculate_rsi(prices, window_length=14):
-    delta = np.diff(prices)
-    gain = np.where(delta >= 0, delta, 0)
-    loss = np.where(delta < 0, -delta, 0)
-    avg_gain = np.convolve(gain, np.ones(window_length)/window_length, mode='valid')
-    avg_loss = np.convolve(loss, np.ones(window_length)/window_length, mode='valid')
-    rs = avg_gain / avg_loss
+# Technical indicators
+def calculate_sma(data, window):
+    """Calculate Simple Moving Average"""
+    return data.rolling(window=window).mean()
+
+
+def calculate_ema(data, span):
+    """Calculate Exponential Moving Average"""
+    return data.ewm(span=span, adjust=False).mean()
+
+
+def calculate_rsi(prices, window=14):
+    """Calculate Relative Strength Index"""
+    delta = prices.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
-    return np.concatenate((np.zeros(len(prices) - len(rsi)), rsi))
-
-rsi = calculate_rsi(np.array(df1), window_length=60)
-
-df1 = pd.Series(rsi)
-
-# Calculate Exponential Moving Average (EMA)
-ema_span = 100  # Span for EMA calculation (similar to window for SMA)
-rsi_ema = df1.ewm(span=ema_span, adjust=False).mean()
-fig = px.line(x=df.Date, y=rsi_ema,
-              labels={'value': 'Values', 'index': 'Date'},
-              title='Relative Strength Index(RSI)-EMA applied')
-fig.update_layout(legend_title_text='Columns')
-st.plotly_chart(fig)
-
-print('RSI > 70 -> OVERBOUGHT')
-print('RSI < 70 -> OVERSOLD')
+    return rsi
 
 
-closing_series = pd.Series(df['Close'])
-
-# Calculate MACD
-def calculate_macd(prices, fast_period=12, slow_period=26, signal_period=9):
-    exp12 = prices.ewm(span=fast_period, adjust=False).mean()
-    exp26 = prices.ewm(span=slow_period, adjust=False).mean()
-    macd_line = exp12 - exp26
-    signal_line = macd_line.ewm(span=signal_period, adjust=False).mean()
+def calculate_macd(prices, fast=12, slow=26, signal=9):
+    """Calculate MACD indicator"""
+    exp1 = prices.ewm(span=fast).mean()
+    exp2 = prices.ewm(span=slow).mean()
+    macd_line = exp1 - exp2
+    signal_line = macd_line.ewm(span=signal).mean()
     histogram = macd_line - signal_line
     return macd_line, signal_line, histogram
 
-macd_line, signal_line, histogram = calculate_macd(closing_series)
 
-# Plotting
-plt.figure(figsize=(15, 6))
-plt.plot(df['Date'], macd_line, label='MACD Line', color='blue')
-plt.plot(df['Date'], signal_line, label='Signal Line', color='red')
-plt.bar(df['Date'], histogram, label='Histogram', color='black', alpha=0.5)
-plt.xlabel('Date')
-plt.ylabel('Value')
-plt.title('MACD, Signal Line, and Histogram')
-plt.legend()
-plt.grid(True)
-st.pyplot()
+def create_lstm_dataset(data, time_step=30):
+    """Create dataset for LSTM model"""
+    X, y = [], []
+    for i in range(len(data) - time_step - 1):
+        X.append(data[i:(i + time_step), 0])
+        y.append(data[i + time_step, 0])
+    return np.array(X), np.array(y)
 
 
-df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
+def build_lstm_model(X_train, lstm1_units=128, lstm2_units=64):
+    """Build and compile LSTM model"""
+    model = Sequential([
+        LSTM(lstm1_units, return_sequences=True, input_shape=(X_train.shape[1], 1), activation='relu'),
+        Dropout(0.2),
+        LSTM(lstm2_units, return_sequences=False, activation='relu'),
+        Dropout(0.2),
+        Dense(25, activation='relu'),
+        Dense(1)
+    ])
 
-df = df.loc[(df['Date'] >= '2021-01-01')
-                     & (df['Date'] < dt.datetime.now())]
-# dropping the unecessary columns
-df = df.drop(columns=['Date'])
-
-
-scaler=MinMaxScaler(feature_range=(0,1))
-df=scaler.fit_transform(np.array(df).reshape(-1,1))
-
-
-training_size = int(len(df)*0.60)
-test_size = len(df)-training_size
-train_data,test_data=df[0:training_size,:],df[training_size:len(df),:1]
-
-
-def create_dataset(dataset, time_step=1):
-    dataX, dataY = [], []
-    for i in range(len(dataset)-time_step-1):
-        a = dataset[i:(i+time_step), 0]   ###i=0, 0,1,2,3-----99   100
-        dataX.append(a)
-        dataY.append(dataset[i + time_step, 0])
-    return np.array(dataX), np.array(dataY)
-
-time_step = 30
-X_train, y_train = create_dataset(train_data, time_step)
-X_test, y_test = create_dataset(test_data, time_step)
-
-# reshape input to be [samples, time steps, features] which is required for LSTM
-X_train =X_train.reshape(X_train.shape[0],X_train.shape[1] , 1)
-X_test = X_test.reshape(X_test.shape[0],X_test.shape[1] , 1)
+    model.compile(
+        optimizer=Adam(learning_rate=0.001),
+        loss='mse',
+        metrics=['mae']
+    )
+    return model
 
 
-regressor=Sequential()
+# Main application
+if st.sidebar.button('🔄 Load Data & Analyze'):
+    # Load data
+    with st.spinner('Loading cryptocurrency data...'):
+        df = load_data(symbol, start_date, end_date)
 
-regressor.add(LSTM(128,return_sequences=True,input_shape=(X_train.shape[1],1),activation="relu"))
-regressor.add(LSTM(64, return_sequences=False))
-regressor.add(Dense(25))
-regressor.add(Dense(1))
+    if df is not None:
+        st.success(f'✅ Data loaded successfully for {selected_crypto}')
 
-regressor.compile(loss="mean_squared_error",optimizer="adamax")
-history = regressor.fit(X_train,y_train,validation_data=(X_test,y_test),epochs=60,batch_size=32,verbose=0)
+        # Display basic info
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            current_price = float(df['Close'].iloc[-1])
+            st.metric("Current Price", f"${current_price:.2f}")
+        with col2:
+            current_price_val = float(df['Close'].iloc[-1])
+            previous_price_val = float(df['Close'].iloc[-2])
+            price_change = current_price_val - previous_price_val
+            price_change_pct = (price_change / previous_price_val) * 100
+            st.metric("24h Change", f"${price_change:.2f}", f"{price_change_pct:.2f}%")
+        with col3:
+            volume = float(df['Volume'].iloc[-1])
+            st.metric("Volume", f"{volume:,.0f}")
+        with col4:
+            market_high = float(df['High'].max())
+            st.metric("Market High", f"${market_high:.2f}")
+
+        # Data preview
+        st.subheader('📊 Data Overview')
+        st.dataframe(df.tail(10))
+
+        # Monthly analysis
+        st.subheader('📈 Monthly Price Analysis')
+        df['Date'] = pd.to_datetime(df['Date'])
+
+        # Check available columns and handle different column names
+        available_cols = df.columns.tolist()
+        open_col = 'Open' if 'Open' in available_cols else df.columns[1]  # First price column
+        close_col = 'Close' if 'Close' in available_cols else df.columns[4]  # Typically close is 5th column
+
+        # Create monthly grouping with available columns
+        monthly_data = df.groupby(df['Date'].dt.strftime('%B'))[[open_col, close_col]].mean()
+        month_order = ['January', 'February', 'March', 'April', 'May', 'June',
+                       'July', 'August', 'September', 'October', 'November', 'December']
+        monthwise = monthly_data.reindex([m for m in month_order if m in monthly_data.index])
+
+        fig_monthly = go.Figure()
+        fig_monthly.add_trace(go.Bar(x=monthwise.index, y=monthwise[open_col],
+                                     name='Open Price', marker_color='lightblue'))
+        fig_monthly.add_trace(go.Bar(x=monthwise.index, y=monthwise[close_col],
+                                     name='Close Price', marker_color='darkblue'))
+        fig_monthly.update_layout(barmode='group', title='Monthly Average Prices',
+                                  xaxis_tickangle=-45, height=400)
+        st.plotly_chart(fig_monthly, use_container_width=True)
+
+        # Price chart
+        st.subheader('📈 Price Analysis')
+        fig_price = go.Figure()
+        fig_price.add_trace(go.Scatter(x=df['Date'], y=df['Open'], name='Open', line=dict(color='blue')))
+        fig_price.add_trace(go.Scatter(x=df['Date'], y=df['Close'], name='Close', line=dict(color='red')))
+        fig_price.add_trace(go.Scatter(x=df['Date'], y=df['High'], name='High', line=dict(color='green')))
+        fig_price.add_trace(go.Scatter(x=df['Date'], y=df['Low'], name='Low', line=dict(color='orange')))
+        fig_price.update_layout(title=f'{selected_crypto} Price Chart', height=500)
+        st.plotly_chart(fig_price, use_container_width=True)
+
+        # Technical indicators
+        st.subheader('🔧 Technical Indicators')
+
+        # Calculate indicators
+        df['SMA_50'] = calculate_sma(df['Close'], 50)
+        df['SMA_200'] = calculate_sma(df['Close'], 200)
+        df['EMA_20'] = calculate_ema(df['Close'], 20)
+        df['RSI'] = calculate_rsi(df['Close'])
+        macd_line, signal_line, histogram = calculate_macd(df['Close'])
+
+        # Moving averages chart
+        fig_ma = go.Figure()
+        fig_ma.add_trace(go.Scatter(x=df['Date'], y=df['Close'], name='Close Price', line=dict(color='black')))
+        fig_ma.add_trace(go.Scatter(x=df['Date'], y=df['SMA_50'], name='SMA 50', line=dict(color='blue')))
+        fig_ma.add_trace(go.Scatter(x=df['Date'], y=df['SMA_200'], name='SMA 200', line=dict(color='red')))
+        fig_ma.add_trace(go.Scatter(x=df['Date'], y=df['EMA_20'], name='EMA 20', line=dict(color='green')))
+        fig_ma.update_layout(title='Moving Averages', height=400)
+        st.plotly_chart(fig_ma, use_container_width=True)
+
+        # RSI chart
+        fig_rsi = go.Figure()
+        fig_rsi.add_trace(go.Scatter(x=df['Date'], y=df['RSI'], name='RSI', line=dict(color='purple')))
+        fig_rsi.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought (70)")
+        fig_rsi.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold (30)")
+        fig_rsi.update_layout(title='Relative Strength Index (RSI)', height=300, yaxis_range=[0, 100])
+        st.plotly_chart(fig_rsi, use_container_width=True)
+
+        # MACD chart
+        fig_macd = go.Figure()
+        fig_macd.add_trace(go.Scatter(x=df['Date'], y=macd_line, name='MACD Line', line=dict(color='blue')))
+        fig_macd.add_trace(go.Scatter(x=df['Date'], y=signal_line, name='Signal Line', line=dict(color='red')))
+        fig_macd.add_trace(go.Bar(x=df['Date'], y=histogram, name='Histogram', marker_color='gray', opacity=0.6))
+        fig_macd.update_layout(title='MACD Indicator', height=400)
+        st.plotly_chart(fig_macd, use_container_width=True)
+
+        # ML Model Training and Prediction
+        st.subheader('🤖 LSTM Price Prediction')
+
+        with st.spinner('Training LSTM model...'):
+            # Prepare data for LSTM
+            close_prices = df[['Close']].values
+            scaler = MinMaxScaler(feature_range=(0, 1))
+            scaled_data = scaler.fit_transform(close_prices)
+
+            # Split data
+            training_size = int(len(scaled_data) * 0.8)
+            train_data = scaled_data[:training_size]
+            test_data = scaled_data[training_size:]
+
+            # Create datasets
+            time_step = 30
+            X_train, y_train = create_lstm_dataset(train_data, time_step)
+            X_test, y_test = create_lstm_dataset(test_data, time_step)
+
+            # Reshape for LSTM
+            X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
+            X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
+
+            # Build and train model
+            model = build_lstm_model(X_train, lstm_units_1, lstm_units_2)
+
+            # Training progress
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
 
-x_input=test_data[len(test_data)-time_step-1:].reshape(1,-1)
-
-temp_input=list(x_input)
-temp_input=temp_input[0].tolist()
-
-from numpy import array
-
-lst_output=[]
-n_steps=time_step
-i=0
-pred_days = 30 # to predict next 30 days
-while(i<pred_days):
-
-    if(len(temp_input)>time_step):
-
-        x_input=np.array(temp_input[1:])
-        #print("{} day input {}".format(i,x_input))
-        x_input = x_input.reshape(1,-1)
-        x_input = x_input.reshape((1, n_steps, 1))
-
-        yhat = regressor.predict(x_input, verbose=0)
-        #print("{} day output {}".format(i,yhat))
-        temp_input.extend(yhat[0].tolist())
-        temp_input=temp_input[1:]
-        #print(temp_input)
-
-        lst_output.extend(yhat.tolist())
-        i=i+1
-
-    else:
-
-        x_input = x_input.reshape((1, n_steps,1))
-        yhat = regressor.predict(x_input, verbose=0)
-        temp_input.extend(yhat[0].tolist())
-
-        lst_output.extend(yhat.tolist())
-        i=i+1
-
-last_days=np.arange(1,time_step+1)
-day_pred=np.arange(time_step+1,time_step+pred_days+1)
-
-temp_mat = np.empty((len(last_days)+pred_days+1,1))
-temp_mat[:] = np.nan
-temp_mat = temp_mat.reshape(1,-1).tolist()[0]
-
-last_original_days_value = temp_mat
-next_predicted_days_value = temp_mat
-
-last_original_days_value[0:time_step+1] = scaler.inverse_transform(df[len(df)-time_step:]).reshape(1,-1).tolist()[0]
-next_predicted_days_value[time_step+1:] = scaler.inverse_transform(np.array(lst_output).reshape(-1,1)).reshape(1,-1).tolist()[0]
-
-mid_mean = (sum(last_original_days_value))/len(last_original_days_value)
-last_original_days_value[time_step]=mid_mean
-
-new_pred_plot = pd.DataFrame({
-    'last_original_days_value':last_original_days_value,
-    'next_predicted_days_value':next_predicted_days_value
-})
-
-for i in range(time_step):
-    new_pred_plot['next_predicted_days_value'][i] = None
-
-for i in range(31, time_step * 2 + 1):  # Fixed the syntax issue here
-    new_pred_plot['last_original_days_value'][i] = None
+            class StreamlitCallback(tf.keras.callbacks.Callback):
+                def on_epoch_end(self, epoch, logs=None):
+                    progress = (epoch + 1) / epochs
+                    progress_bar.progress(progress)
+                    status_text.text(f'Training... Epoch {epoch + 1}/{epochs} - Loss: {logs["loss"]:.4f}')
 
 
-names = cycle(['Last 30 days close price','Predicted next 30 days close price'])
+            history = model.fit(
+                X_train, y_train,
+                validation_data=(X_test, y_test),
+                epochs=epochs,
+                batch_size=batch_size,
+                verbose=0,
+                callbacks=[StreamlitCallback()]
+            )
 
-fig = px.line(new_pred_plot,x=new_pred_plot.index, y=[new_pred_plot['last_original_days_value'],
-                                                      new_pred_plot['next_predicted_days_value']],
-              labels={'value': 'Stock price','index': 'Timestamp'})
-fig.update_layout(title_text='Compare last 30 days vs next 30 days',
-                  plot_bgcolor='white', font_size=15, font_color='black',legend_title_text='Close Price')
+            progress_bar.empty()
+            status_text.empty()
 
-fig.for_each_trace(lambda t:  t.update(name = next(names)))
-fig.update_xaxes(showgrid=False)
-fig.update_yaxes(showgrid=False)
-st.plotly_chart(fig)
+        st.success('✅ Model training completed!')
 
-import datetime
+        # Make predictions
+        with st.spinner('Generating predictions...'):
+            # Predict future prices
+            last_sequence = scaled_data[-time_step:]
+            predictions = []
 
-def get_next_30_days():
-    today = datetime.date.today()
-    next_30_days = [today + datetime.timedelta(days=i) for i in range(1, 31)]
-    return next_30_days
+            for _ in range(prediction_days):
+                next_pred = model.predict(last_sequence.reshape(1, time_step, 1), verbose=0)
+                predictions.append(next_pred[0, 0])
+                last_sequence = np.roll(last_sequence, -1)
+                last_sequence[-1] = next_pred
 
-dates = get_next_30_days()
+            # Inverse transform predictions
+            predictions = scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
 
-final_output = pd.DataFrame({
-    'DATE':dates,
-    'PREDICTED STOCK PRICE(USD)':next_predicted_days_value[31:]
-})
+            # Create future dates
+            last_date = df['Date'].iloc[-1]
+            future_dates = [last_date + dt.timedelta(days=i) for i in range(1, prediction_days + 1)]
 
-st.dataframe(final_output)
+            # Create prediction DataFrame
+            prediction_df = pd.DataFrame({
+                'Date': future_dates,
+                'Predicted_Price': predictions.flatten()
+            })
 
-max_index = final_output['PREDICTED STOCK PRICE(USD)'].idxmax()
-min_index = final_output['PREDICTED STOCK PRICE(USD)'].idxmin()
+        # Display predictions
+        st.subheader('🔮 Price Predictions')
 
-# Create a DataFrame with max and min information
-result_df = pd.DataFrame({
-    'Type': ['Maximum', 'Minimum'],
-    'Date': [final_output.loc[max_index, 'DATE'], final_output.loc[min_index, 'DATE']],
-    'Value (USD)': [final_output.loc[max_index, 'PREDICTED STOCK PRICE(USD)'],
-                     final_output.loc[min_index, 'PREDICTED STOCK PRICE(USD)']]
-})
+        # Prediction chart
+        fig_pred = go.Figure()
 
-st.dataframe(result_df)
+        # Historical data (last 60 days)
+        recent_data = df.tail(60)
+        fig_pred.add_trace(go.Scatter(
+            x=recent_data['Date'],
+            y=recent_data['Close'],
+            name='Historical Price',
+            line=dict(color='blue')
+        ))
 
-st.subheader("To predict whether the user should buy or sell his/her coins")
+        # Predictions
+        fig_pred.add_trace(go.Scatter(
+            x=prediction_df['Date'],
+            y=prediction_df['Predicted_Price'],
+            name=f'Predicted Price ({prediction_days} days)',
+            line=dict(color='red', dash='dash')
+        ))
 
-user_stock_price = st.number_input('Total Bitcoin holdings value(in USD):')
-user_stock_coins = st.number_input('Total no. of Bitcoins you own:')
+        fig_pred.update_layout(
+            title=f'{selected_crypto} Price Prediction',
+            height=500,
+            xaxis_title='Date',
+            yaxis_title='Price (USD)'
+        )
+        st.plotly_chart(fig_pred, use_container_width=True)
 
-if user_stock_coins>0:
-    value_of_one_coin = user_stock_price/user_stock_coins
+        # Prediction table
+        st.dataframe(prediction_df)
 
-    max_predicted_price = result_df['Value (USD)'][0]
-    min_predicted_price = result_df['Value (USD)'][1]
+        # Investment recommendation
+        st.subheader('💡 Investment Recommendation')
 
-    if(max_predicted_price>value_of_one_coin):
-        st.write('SUGGESTION:  BUY NOW')
-        st.write('SELL ON: ', result_df['Date'][0])
-    else:
-        st.write('HOLD as prices are not going up in next 30 days')
+        current_price = float(df['Close'].iloc[-1])
+        max_predicted = float(prediction_df['Predicted_Price'].max())
+        min_predicted = float(prediction_df['Predicted_Price'].min())
+        avg_predicted = float(prediction_df['Predicted_Price'].mean())
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Current Price", f"${current_price:.2f}")
+        with col2:
+            st.metric("Predicted Max", f"${max_predicted:.2f}",
+                      f"{((max_predicted / current_price - 1) * 100):.1f}%")
+        with col3:
+            st.metric("Predicted Avg", f"${avg_predicted:.2f}",
+                      f"{((avg_predicted / current_price - 1) * 100):.1f}%")
+
+        # Investment advice
+        if avg_predicted > current_price * 1.05:  # 5% threshold
+            st.success("🟢 **RECOMMENDATION: BUY** - Model predicts price increase")
+            max_date = prediction_df.loc[prediction_df['Predicted_Price'].idxmax(), 'Date']
+            st.info(f"📅 Consider selling around: {max_date.strftime('%Y-%m-%d')}")
+        elif avg_predicted < current_price * 0.95:  # 5% threshold
+            st.error("🔴 **RECOMMENDATION: SELL** - Model predicts price decrease")
+        else:
+            st.warning("🟡 **RECOMMENDATION: HOLD** - Price expected to remain stable")
+
+        # Portfolio calculator
+        st.subheader('💰 Portfolio Analysis')
+
+        if holding_value > 0 and num_coins > 0:
+            avg_price_paid = float(holding_value / num_coins)
+            potential_profit = (max_predicted - avg_price_paid) * num_coins
+            potential_loss = (min_predicted - avg_price_paid) * num_coins
+
+            # Display portfolio metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Average Price Paid", f"${avg_price_paid:.2f}")
+            with col2:
+                st.metric("Potential Max Profit", f"${potential_profit:.2f}",
+                          f"{((potential_profit / holding_value) * 100):.1f}%")
+            with col3:
+                st.metric("Potential Max Loss", f"${potential_loss:.2f}",
+                          f"{((potential_loss / holding_value) * 100):.1f}%")
+
+            # Portfolio recommendation
+            if avg_price_paid > 0:
+                if max_predicted > avg_price_paid * 1.05:
+                    st.success(
+                        f"🟢 **Good Entry Point!** Your average price of ${avg_price_paid:.2f} is below predicted maximum of ${max_predicted:.2f}")
+                elif avg_price_paid > max_predicted:
+                    st.error(
+                        f"🔴 **Consider Selling** Your average price of ${avg_price_paid:.2f} is above predicted maximum of ${max_predicted:.2f}")
+                else:
+                    st.warning(f"🟡 **Monitor Closely** Your position is near predicted levels")
+        else:
+            st.info("👈 Please enter your portfolio information in the sidebar to see personalized analysis")
+
+# Initialize the app
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Instructions")
+st.sidebar.markdown("1. Select your preferred cryptocurrency")
+st.sidebar.markdown("2. Choose date range for analysis")
+st.sidebar.markdown("3. Adjust model parameters if needed")
+st.sidebar.markdown("4. Click 'Load Data & Analyze' to start")
+
+if 'data_loaded' not in st.session_state:
+    st.info("👈 Please configure settings in the sidebar and click 'Load Data & Analyze' to begin.")
