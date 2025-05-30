@@ -56,7 +56,8 @@ st.dataframe(df)
 df = df.dropna(how='any')
 
 
-df = df.drop(columns= ['Volume', 'Adj Close'], axis=1)
+cols_to_drop = [col for col in ['Volume', 'Adj Close'] if col in df.columns]
+df = df.drop(columns=cols_to_drop, axis=1)
 
 st.write('Monthvise average crypto price from 2018')
 
