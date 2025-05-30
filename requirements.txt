@@ -1,7 +1,21 @@
-tensorflow_io
-matplotlib
-scikit-learn
-tensorflow
-yfinance
-plotly
-streamlit
+# Core Data Science Libraries
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+
+# Machine Learning
+scikit-learn>=1.3.0
+tensorflow>=2.13.0
+
+# Financial Data
+yfinance>=0.2.18
+
+# Web App Framework
+streamlit>=1.28.0
+
+# Interactive Plotting
+plotly>=5.15.0
+
+# Utilities
+datetime
+warnings
