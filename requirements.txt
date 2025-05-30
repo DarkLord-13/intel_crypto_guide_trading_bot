@@ -15,7 +15,3 @@ streamlit>=1.28.0
 
 # Interactive Plotting
 plotly>=5.15.0
-
-# Utilities
-datetime
-warnings
